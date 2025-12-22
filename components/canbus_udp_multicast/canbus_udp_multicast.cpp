@@ -195,6 +195,7 @@ void CanbusUdpMulticast::setup() {
 
 float CanbusUdpMulticast::get_setup_priority() const { return setup_priority::AFTER_WIFI; }
 
+#if 0
 void CanbusUdpMulticast::loop() {
   if (!is_initialized)
     return;
@@ -216,13 +217,16 @@ void CanbusUdpMulticast::loop() {
     }
   }
 }
+#endif
 
 void CanbusUdpMulticast::trigger(uint32_t can_id, bool use_extended_id, bool remote_transmission_request,
                                  const std::vector<uint8_t> &data) {
   // fire all triggers
   // TODO: currently we can't check can_id, can_mask, remote_transmission_request because these trigger fields
   // are protected
+  ESP_LOGD(TAG, "trigger!");
   for (auto *trigger : this->triggers_) {
+    ESP_LOGD(TAG, "trigger n!");
     trigger->trigger(data, can_id, remote_transmission_request);
   }
 }
@@ -231,6 +235,15 @@ bool CanbusUdpMulticast::setup_internal() {
   if (!this->canbus) {
     return true;
   }
+
+  auto wmcb = [this](uint32_t can_id, bool extended_id, bool rtr, const std::vector<uint8_t> &data) -> void {
+    this->send_udp_multicast(can_id, extended_id, rtr, data);
+  };
+  if (this->canbus)
+    this->canbus->add_callback(wmcb);
+
+  return true;
+
   Automation<std::vector<uint8_t>, uint32_t, bool> *automation;
   LambdaAction<std::vector<uint8_t>, uint32_t, bool> *lambdaaction;
   canbus::CanbusTrigger *canbus_canbustrigger;
@@ -290,6 +303,8 @@ canbus::Error CanbusUdpMulticast::send_message_no_loopback(struct canbus::CanFra
     this->canbus->send_data(frame->can_id, frame->use_extended_id, frame->remote_transmission_request, data);
   }
   trigger(frame->can_id, frame->use_extended_id, frame->remote_transmission_request, data);
+  ESP_LOGD(TAG, "send_message_no_loopback, can_id: %03lx", frame->can_id);
+
   return canbus::ERROR_OK;
 }
 
@@ -302,7 +317,38 @@ canbus::Error CanbusUdpMulticast::send_message(struct canbus::CanFrame *frame) {
   return canbus::ERROR_OK;
 };
 
-canbus::Error CanbusUdpMulticast::read_message(struct canbus::CanFrame *frame) { return canbus::ERROR_NOMSG; };
+canbus::Error CanbusUdpMulticast::read_message(struct canbus::CanFrame *frame) { 
+
+  if (!is_initialized)
+    return canbus::ERROR_NOMSG;
+
+  uint8_t udp_recv_buf[256];
+  int size = recvfrom(sockfd, udp_recv_buf, 256, MSG_DONTWAIT, 0, 0);
+
+  // Ignore the case when received less bytes than minimal CAN-UDP message size (60b)
+  if (size >= 8) {
+    ESP_LOGD(TAG, "received, len: %d", size);
+
+    if (decode_can_frame(udp_recv_buf, 256, frame)) {
+      ESP_LOGD(TAG, "decoded frame: can_id: %03lx, dlc: %d", frame->can_id, frame->can_data_length_code);
+      
+      std::vector<uint8_t> data = std::vector<uint8_t>(frame->data, frame->data + frame->can_data_length_code);
+      if (this->canbus) {
+        this->canbus->send_data(frame->can_id, frame->use_extended_id, frame->remote_transmission_request, data);
+      }
+      return canbus::ERROR_OK;
+    }
+
+  } else {
+    if (size >=0 )
+      ESP_LOGD(TAG, "ERROR: received, len: %d", size);
+    if (errno != 11) {
+      ESP_LOGE(TAG, "err: %d", errno);
+    }
+  }
+
+  return canbus::ERROR_NOMSG; 
+};
 
 }  // namespace canbus_udp_multicast
 }  // namespace esphome

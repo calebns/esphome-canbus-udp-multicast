@@ -32,7 +32,7 @@ class CanbusUdpMulticast : public canbus::Canbus {
 
   float get_setup_priority() const override;
   void setup();
-  void loop() override;
+  //void loop() override;
 
  protected:
   bool setup_internal() override;
@@ -45,6 +45,7 @@ class CanbusUdpMulticast : public canbus::Canbus {
                const std::vector<uint8_t> &data);
   bool decode_can_frame(uint8_t *buffer, size_t len, struct canbus::CanFrame *frame);
   int esp_join_multicast_group(int sockfd);
+ 
 };
 }  // namespace canbus_udp_multicast
 }  // namespace esphome
